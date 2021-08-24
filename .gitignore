@@ -1,0 +1,14 @@
+tmp/
+.vscode/
+dist/
+build/
+bak/
+__pycached__/
+runs/
+
+
+*.pyc
+*.egg-info/
+
+
+result.png
