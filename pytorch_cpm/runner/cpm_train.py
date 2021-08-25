@@ -23,7 +23,7 @@ __DIR__ = os.path.dirname(os.path.abspath(__file__))
 
 def parse_args(cmds=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default=os.path.join(__DIR__, 'config.yml'), help='to set the parameters')
+    parser.add_argument('--config', default=os.path.join(__DIR__, 'config.yaml'), help='to set the parameters')
     parser.add_argument('--train_dir','-i', help='the path of train file')
     parser.add_argument('--val_dir', '-v', help='the path of val file')
     parser.add_argument('--num-class', default=14, type=int)
@@ -296,5 +296,5 @@ def main():
     tr.train(train_loader, val_loader, args)
 
 if __name__ == '__main__':
-    cmds = ["--gpu","0","--train_dir","H:/Dataset/keypoint/lsp/lsp_dataset","--config","../config/config.yml"]
+    cmds = ["--gpu","0","--train_dir","H:/Dataset/keypoint/lsp/lsp_dataset","--config","../config/config.yaml"]
     main()
