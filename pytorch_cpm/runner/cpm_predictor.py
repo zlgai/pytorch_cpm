@@ -2,8 +2,45 @@ import numpy as np
 import torch
 import time
 import cv2
-from cameraViewer import CameraViewer
-from cpm_test import construct_model, draw_paint, guassian_kernel, get_kpts
+from pytorch_cpm.cameraViewer import CameraViewer
+
+stride = 8
+sigma = 3.0
+
+
+def construct_model(pre_model_path, num_class=14):
+
+    model = cpm_model.CPM(k=num_class)
+    state_dict = torch.load(pre_model_path)['state_dict']
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k[7:]
+        new_state_dict[name] = v
+    model.load_state_dict(new_state_dict)
+    model = torch.nn.DataParallel(model, device_ids=[0]).cuda()
+
+    return model
+
+def get_kpts(maps, img_h = 368.0, img_w = 368.0):
+
+    # maps (1,15,46,46)
+    maps = maps.clone().cpu().data.numpy()
+    map_6 = maps[0]
+
+    kpts = []
+    for m in map_6[1:]:
+        h, w = np.unravel_index(m.argmax(), m.shape)
+        x = int(w * img_w / m.shape[1])
+        y = int(h * img_h / m.shape[0])
+        kpts.append([x,y])
+    return kpts
+
+
+def guassian_kernel(size_w, size_h, center_x, center_y, sigma):
+    gridy, gridx = np.mgrid[0:size_h, 0:size_w]
+    D2 = (gridx - center_x) ** 2 + (gridy - center_y) ** 2
+    return np.exp(-D2 / 2.0 / sigma / sigma)
 
 
 class CpmPredictor(object):

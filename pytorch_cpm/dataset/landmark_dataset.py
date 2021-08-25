@@ -14,12 +14,12 @@ import pandas as pd
 from PIL import Image
 import torch
 import torch.utils.data as data
+import cv2
 
-from utils.transforms import fliplr_joints, crop, generate_target, transform_pixel
+from pytorch_cpm.utils.transforms import fliplr_joints, crop, generate_target, transform_pixel
 
 
 class FaceDataset(data.Dataset):
-
     def __init__(self, csv_file, image_root=None, is_train=True, transform=None):
         # specify annotation file for dataset
         self.csv_file = csv_file
@@ -31,7 +31,7 @@ class FaceDataset(data.Dataset):
         self.input_size = [368, 368]
         self.output_size = [46, 46]
         self.sigma = 1.0
-        self.scale_factor = 0.25
+        self.scale_factor = 0.15 ###
         # self.rot_factor = cfg.DATASET.ROT_FACTOR
         self.label_type = 'Gaussian'
         self.flip = False
@@ -58,6 +58,13 @@ class FaceDataset(data.Dataset):
         1. random fliplr
         2. crop and rotate
         3. gen Heatmap
+        
+        Returns
+        -------
+        img: shape=[C,H,W]
+        heatmaps: shape=[N,H2,W2]，典型shape为[68, 46, 46]
+        pts: shape=[N,2]， 对应原图的pts。
+        tpts: shape=[N,2], 对应crop的pts。
 
         """
         image_path = self.landmarks_frame.iloc[idx, -1]
@@ -69,7 +76,8 @@ class FaceDataset(data.Dataset):
         pts = self.landmarks_frame.iloc[idx, 0:-5].values
         pts = pts.astype('float').reshape(-1, 2)
         
-        scale *= 1.25
+        ### scale *= 1.25
+
         # print(image_path, end=' ')
         img = np.array(Image.open(image_path).convert('RGB'), dtype=np.float32)
 
@@ -89,21 +97,13 @@ class FaceDataset(data.Dataset):
 
         img, tpts = self.crop(img, pts, center, scale, rot)
         img = self.preprocess_img(img)
-        target = self.preprocess_pts(tpts)
+        heatmaps = self.preprocess_pts(tpts)
 
         meta = {'index': idx, 'center': torch.Tensor(center), 'scale': scale,
                 'pts': torch.Tensor(pts), 'tpts': torch.Tensor(tpts), 'image_path': image_path}
 
-        return img, target, meta
+        return img, heatmaps, meta
 
-
-    def origin(self, idx):
-        image_path = self.landmarks_frame.iloc[idx, -1]
-        center, scale = self.rect2center(self.landmarks_frame.iloc[idx, -5:-1])
-        pts = self.landmarks_frame.iloc[idx, 0:-5].values
-        pts = pts.astype('float').reshape(-1, 2)
-        img = np.array(Image.open(image_path).convert('RGB'), dtype=np.float32)
-        return img, pts
 
     def crop(self, img, pts, center, scale, rot=0):
         nparts = pts.shape[0]
@@ -131,13 +131,50 @@ class FaceDataset(data.Dataset):
 
     def preprocess_pts(self, pts):
         nparts = pts.shape[0]
-        target = np.zeros((nparts, self.output_size[0], self.output_size[1]))
+        heatmaps = np.zeros((nparts, self.output_size[0], self.output_size[1]))
         for i in range(nparts):
-            target[i] = generate_target(target[i], pts[i]-1, self.sigma, label_type=self.label_type)
+            heatmaps[i] = generate_target(heatmaps[i], pts[i]-1, self.sigma, label_type=self.label_type)
 
-        target = torch.Tensor(target)
-        return target
+        heatmaps = torch.Tensor(heatmaps)
+        return heatmaps
 
+    def origin(self, idx, is_crop=None, is_show=None):
+        image_path = self.landmarks_frame.iloc[idx, -1]
+        if self.image_root:
+            image_path = os.path.join(self.image_root, image_path)
+
+        center, scale = self.rect2center(self.landmarks_frame.iloc[idx, -5:-1])
+
+        pts = self.landmarks_frame.iloc[idx, 0:-5].values
+        pts = pts.astype('float').reshape(-1, 2)
+        
+        scale *= 1.25
+        # print(image_path, end=' ')
+        img = np.array(Image.open(image_path).convert('RGB'), dtype=np.float32)
+
+        if is_crop:
+            rot = 0
+            scale *=  random.uniform(1 - self.scale_factor, 1 + self.scale_factor)
+            img, tpts = self.crop(img, pts, center, scale, rot)
+            if is_show:
+                tpts2 = (tpts-1) * 368/46+1
+                img2 = drawKeypoints(img, tpts2)
+                cv2.imshow('aaa', img2.astype(np.uint8))
+                cv2.waitKey(0)
+            return img, tpts
+        else:
+            if is_show:
+                cv2.imshow('aa', img.astype(np.uint8))
+                cv2.waitKey(0)
+            return img, pts
+
+def drawKeypoints(img, pts):
+    img2 = img.copy()
+    for pt in pts:
+        x = int(pt[0])
+        y = int(pt[1])
+        cv2.circle(img2, (x, y), radius=2, thickness=-1, color=(255, 0, 0))
+    return img2
 
 if __name__ == '__main__':
     pass

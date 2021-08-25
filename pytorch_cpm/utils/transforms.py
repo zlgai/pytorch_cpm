@@ -163,6 +163,9 @@ def transform_preds(coords, center, scale, output_size):
 def crop(img, center, scale, output_size, rot=0):
     """
     
+    scale 越大，切图内容越多
+    output_size: 切图的尺寸
+
     """
     center_new = center.clone()
 
@@ -253,6 +256,14 @@ def generate_target(img, pt, sigma, label_type='Gaussian'):
     img[img_y[0]:img_y[1], img_x[0]:img_x[1]] = g[g_y[0]:g_y[1], g_x[0]:g_x[1]]
     return img
 
+def main():
+    imgp= r"H:\Project\Github\openpose_misc\pytorch_cpm\tmp\134212_1.jpg"
+    img = cv2.imread(imgp)
+    img2 = crop(img, torch.tensor([250, 250]), 2.0, [300, 300])
+    print(img2.shape)
+    cv2.imshow('aaa', img2.astype(np.uint8))
+    cv2.waitKey(0)
 
 
-
+if __name__ == "__main__":
+    main()

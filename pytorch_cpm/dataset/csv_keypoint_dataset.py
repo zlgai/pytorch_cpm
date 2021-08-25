@@ -7,10 +7,11 @@ import math
 import torch
 import torch.utils.data as data
 import scipy.misc
+import pandas as pd
 from PIL import Image
 import cv2
-import Mytransforms
-import pandas as pd
+import pytorch_cpm.utils.Mytransforms as Mytransforms
+
 
 def guassian_kernel(size_w, size_h, center_x, center_y, sigma):
     gridy, gridx = np.mgrid[0:size_h, 0:size_w]

@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from cameraViewer import CameraViewer
+from pytorch_cpm.cameraViewer import CameraViewer
 
 
 __DIR__ = os.path.dirname(os.path.abspath(__file__))

@@ -6,4 +6,5 @@ torchvision
 easydict
 matplotlib
 pyyaml
+tensorboardx
 

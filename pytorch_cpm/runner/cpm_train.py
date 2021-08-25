@@ -8,15 +8,15 @@ import torch.optim
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
-from models.cpm_model import CPM
-from dataset.lsp_lspet_data import LSP_Data
-from dataset.csv_keypoint_dataset import CsvDataset
-from utils.utils import Config, adjust_learning_rate, \
+from pytorch_cpm.models.cpm_model import CPM
+from pytorch_cpm.dataset.lsp_lspet_data import LSP_Data
+from pytorch_cpm.dataset.csv_keypoint_dataset import CsvDataset
+from pytorch_cpm.utils.utils import Config, adjust_learning_rate, \
     AverageMeter, save_checkpoint
-from utils.misc_utils import namespaceMerge
-import utils.Mytransforms as Mytransforms
+from pytorch_cpm.utils.misc_utils import namespaceMerge
+import pytorch_cpm.utils.Mytransforms as Mytransforms
 
 __DIR__ = os.path.dirname(os.path.abspath(__file__))
        
@@ -85,32 +85,36 @@ def get_parameters(model, config, isdefault=True):
     return params, [1., 2., 4., 8.]
 
 def dataFactory(train_dir, val_dir, args):
-    # train
-    mode = 'lspet' if 'lspet' in train_dir else 'lsp'
-    
     transformer = Mytransforms.Compose([Mytransforms.RandomResized(),
         Mytransforms.RandomRotate(40),
         Mytransforms.RandomCrop(368),
         Mytransforms.RandomHSV((0.8, 1.2), (0.8, 1.2), (25, 25)),
         # Mytransforms.RandomHorizontalFlip(),
     ])
-    dataset = LSP_Data(mode, train_dir, 8, transformer=transformer)
-    # dataset = CsvDataset(train_dir, image_root=args.image_root,transformer=transformer)
+    if args.dataset_type == "LSP":
+        mode = 'lspet' if 'lspet' in train_dir else 'lsp'
+        
+        
+        dataset = LSP_Data(mode, train_dir, 8, transformer=transformer)
+    else:
+        dataset = CsvDataset(train_dir, image_root=args.image_root,transformer=transformer)
+# val
+    val_dataset = dataset
+    if args.val_dir:
+        if args.dataset_type == "LSP":
+            mode = 'lspet' if 'lspet' in args.val_dir else 'lsp'
+            val_dataset = LSP_Data(mode, args.val_dir, 8,
+                Mytransforms.Compose([Mytransforms.TestResized(368)]))        
+        else:
+            val_dataset = CsvDataset(val_dir, image_root=args.image_root)
 
     train_loader = torch.utils.data.DataLoader(
         dataset=dataset, drop_last=True,
         batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True)
-# val
-    if args.val_dir:
-        mode = 'lspet' if 'lspet' in args.val_dir else 'lsp'
-        val_dataset = LSP_Data(mode, args.val_dir, 8,
-            Mytransforms.Compose([Mytransforms.TestResized(368)]))
-        val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
-            num_workers=args.workers, pin_memory=True)
-    else:
-        val_loader = None
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
+        num_workers=args.workers, pin_memory=True)
 
     return train_loader, val_loader
 
@@ -203,11 +207,11 @@ class Trainer:
                 print("loss=", [l.val for l in losses_list], "avg=", [l.avg for l in losses_list])
                 # print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), '-' * 80)
 
-        batch_time.reset()
-        data_time.reset()
-        losses.reset()
-        for los in losses_list:
-            los.reset()
+        # batch_time.reset()
+        # data_time.reset()
+        # losses.reset()
+        # for los in losses_list:
+        #     los.reset()
 
 
     def valid_epoch(self, val_loader):
@@ -293,6 +297,7 @@ def main():
     tr.optimizer = torch.optim.SGD(_params, args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
     cudnn.benchmark = True
+    # exit(0)
     tr.train(train_loader, val_loader, args)
 
 if __name__ == '__main__':
