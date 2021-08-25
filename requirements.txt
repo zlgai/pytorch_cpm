@@ -1,0 +1,9 @@
+numpy
+pandas
+opencv-python
+pytorch
+torchvision
+easydict
+matplotlib
+pyyaml
+

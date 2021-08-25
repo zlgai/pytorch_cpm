@@ -6,6 +6,7 @@ import numpy as np
 import numbers
 import collections
 import cv2
+import matplotlib
 
 def normalize(tensor, mean, std):
     """Normalize a ``torch.tensor``

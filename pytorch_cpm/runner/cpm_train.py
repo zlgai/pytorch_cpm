@@ -1,19 +1,20 @@
 # -*-coding:UTF-8-*-
 import argparse
 import time
+import os
 import torch.optim
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import sys
-sys.path.append("..")
+sys.path.append(os.getcwd())
 from utils.utils import adjust_learning_rate as adjust_learning_rate
 from utils.utils import AverageMeter as AverageMeter
 from utils.utils import save_checkpoint as save_checkpoint
 from utils.utils import Config as Config
-import cpm_model
-from lsp_lspet_data import LSP_Data
-from lsp_lspet_data2 import CsvDataset
-import Mytransforms
+import models.cpm_model
+from dataset.lsp_lspet_data import LSP_Data
+# from dataset.lsp_lspet_data2 import CsvDataset
+import utils.Mytransforms as Mytransforms
 
 
 def parse_args(cmds=None):
@@ -24,17 +25,21 @@ def parse_args(cmds=None):
                         dest='gpu', help='the gpu used')
     parser.add_argument('--pretrained', default='../ckpt/cpm_latest.pth.tar',type=str,
                         dest='pretrained', help='the path of pretrained model')
-    parser.add_argument('--train_dir', help='the path of train file')
+    parser.add_argument('--train_dir','-i', help='the path of train file')
     parser.add_argument('--val_dir', help='the path of val file')
     parser.add_argument('--model-name', default='../ckpt/cpm', help='model name to save parameters')
     parser.add_argument('--num-class', default=14, type=int)
+    parser.add_argument('--workers', default=4, type=int)
+    parser.add_argument('--batch-size', default=4, type=int)
+    parser.add_argument('--epochs', default=4, type=int)
+    parser.add_argument('--accumulate', default=1, type=int)
     parser.add_argument('--image-root')
     return parser.parse_args(cmds)
 
 
 def construct_model(args):
 
-    model = cpm_model.CPM(k=args.num_class)
+    model = models.cpm_model.CPM(k=args.num_class)
     # load pretrained model
     # state_dict = torch.load(args.pretrained)['state_dict']
     # from collections import OrderedDict
@@ -90,8 +95,8 @@ def dataFactory(train_dir, val_dir, args):
 
     train_loader = torch.utils.data.DataLoader(
         dataset=dataset,
-        batch_size=config.batch_size, shuffle=True,
-        num_workers=config.workers, pin_memory=True)
+        batch_size=args.batch_size, shuffle=True,
+        num_workers=args.workers, pin_memory=True)
 # val
     if args.val_dir:
         mode = 'lspet' if 'lspet' in val_dir else 'lsp'
@@ -99,8 +104,8 @@ def dataFactory(train_dir, val_dir, args):
             lsp_lspet_data.LSP_Data(mode, val_dir, 8,
                               Mytransforms.Compose([Mytransforms.TestResized(368),
                                                     ])),
-            batch_size=config.batch_size, shuffle=True,
-            num_workers=config.workers, pin_memory=True)
+            batch_size=args.batch_size, shuffle=True,
+            num_workers=args.workers, pin_memory=True)
     else:
         val_loader = None
 
@@ -134,12 +139,13 @@ class Trainer:
         loss_list = [self.criterion(heat, heatmap_var) * self.HEAT_WEIGHT for heat in heat_list]
         # bSize = input.size(0)
 
+        loss = sum(loss_list)
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=200, norm_type=2)
         self.optimizer.step()
 
-        return loss_list.detach(), input.size(0)
+        return loss_list, input.size(0)
 
     def test_step(self, batch, batch_idx):
         input, heatmap, centermap = batch
@@ -152,7 +158,7 @@ class Trainer:
         assert heat_list[0].shape == heatmap_var.shape, (heat_list[0].shape, heatmap_var.shape)
         loss_list = [self.criterion(heat, heatmap_var) * self.HEAT_WEIGHT for heat in heat_list]
         
-        return loss_list.detach(), input.size(0)
+        return loss_list, input.size(0)
 
     def train_epoch(self, train_loader):
         multiple = [1., 2., 4., 8.]
@@ -162,7 +168,7 @@ class Trainer:
         losses_list = [AverageMeter() for i in range(6)]
 
         config = self.config
-
+        end = time.time()
         for i, (batch) in enumerate(train_loader):
             learning_rate = adjust_learning_rate(self.optimizer, self._iter, config.base_lr, policy=config.lr_policy,
                                                 policy_parameter=config.policy_parameter, multiple=multiple)
@@ -204,6 +210,7 @@ class Trainer:
         losses_list = [AverageMeter() for i in range(6)]
 
         self.config = config
+        end = time.time()
 
         model.eval()
         with torch.no_grad():
@@ -236,17 +243,16 @@ class Trainer:
         # for cnt in range(6):
         #     losses_list[cnt].reset()
         
-    def train(model, train_loader, val_loader, args):
+    def train(self, train_loader, val_loader, args):
         config = Config(args.config)
         cudnn.benchmark = True
 
         self.criterion = nn.MSELoss().cuda()
 
-        params, multiple = get_parameters(model, config, False)
+        params, multiple = get_parameters(self.model, config, False)
 
         self.optimizer = torch.optim.SGD(params, config.base_lr, momentum=config.momentum,
                                     weight_decay=config.weight_decay)
-        self.model = model
         self.config = config
 
         end = time.time()
@@ -268,7 +274,7 @@ class Trainer:
                 if is_best:
                     self.save_ckpt(args.model_name+"_best.pth", is_best=losses.avg < best_loss)
                 best_loss = min(best_loss, losses.avg)
-            model.train()
+            self.model.train()
             print("run epochs finished ", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
         print("train finished")
 
@@ -279,8 +285,8 @@ def main():
     tr = Trainer()
     
     train_loader, val_loader = dataFactory(args.train_dir, args.val_dir, args)
-
-    tr.train(model, train_loader, val_loader, args)
+    tr.model =model
+    tr.train(train_loader, val_loader, args)
 
 if __name__ == '__main__':
     cmds = ["--gpu","0","--train_dir","H:/Dataset/keypoint/lsp/lsp_dataset","--config","../config/config.yml"]

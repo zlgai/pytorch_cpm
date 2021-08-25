@@ -7,7 +7,7 @@ import torch.utils.data as data
 import scipy.misc
 from PIL import Image
 import cv2
-import Mytransforms
+import utils.Mytransforms as Mytransforms
 
 
 def read_data_file(root_dir):
