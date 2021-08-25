@@ -70,9 +70,6 @@ def save_checkpoint(state, is_best, filename='checkpoint'):
         shutil.copyfile(filename + '_latest.pth.tar', filename + '_best.pth.tar')
 
 def Config(filename):
-
     with open(filename, 'r') as f:
         parser = edict(yaml.load(f))
-    for x in parser:
-        print('{}: {}'.format(x, parser[x]))
     return parser

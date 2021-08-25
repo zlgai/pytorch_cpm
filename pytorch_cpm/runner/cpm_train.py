@@ -15,27 +15,30 @@ from dataset.lsp_lspet_data import LSP_Data
 from dataset.csv_keypoint_dataset import CsvDataset
 from utils.utils import Config, adjust_learning_rate, \
     AverageMeter, save_checkpoint
+from utils.misc_utils import namespaceMerge
 import utils.Mytransforms as Mytransforms
 
+__DIR__ = os.path.dirname(os.path.abspath(__file__))
+       
 
 def parse_args(cmds=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str,
-                        dest='config', help='to set the parameters')
-    parser.add_argument('--gpu', default=None, nargs='+', type=int,
-                        dest='gpu', help='the gpu used')
-    parser.add_argument('--pretrained', default='../ckpt/cpm_latest.pth.tar',
-                        help='the path of pretrained model')
+    parser.add_argument('--config', default=os.path.join(__DIR__, 'config.yml'), help='to set the parameters')
     parser.add_argument('--train_dir','-i', help='the path of train file')
     parser.add_argument('--val_dir', '-v', help='the path of val file')
-    parser.add_argument('--model-name', default='../ckpt/cpm', help='model name to save parameters')
     parser.add_argument('--num-class', default=14, type=int)
+    parser.add_argument('--image-root')
+    parser.add_argument('--dataset-type', type=str.upper, choices=["LSP", "COCO", "CSV"], help='dataset type')
+    parser.add_argument('--model-name', default='../ckpt/cpm', help='model name to save parameters')
+    parser.add_argument('--pretrained', default='../ckpt/cpm_latest.pth.tar',
+                        help='the path of pretrained model')
+    
     parser.add_argument('--workers', default=4, type=int)
-    parser.add_argument('--batch-size', default=4, type=int)
+    parser.add_argument('--batch-size', type=int)
     parser.add_argument('--epochs', default=4, type=int)
     parser.add_argument('--accumulate', default=1, type=int)
-    parser.add_awrgument('--image-root')
-    parser.add_argument('--dataset-type', type=str.upper, choices=["LSP", "COCO", "CSV"], help='dataset type')
+    parser.add_argument('--learning-rate', '-lr', type=float, dest='base_lr')
+    parser.add_argument('--gpu', default=None, nargs='+', type=int, dest='gpu', help='the gpu used')
 
     return parser.parse_args(cmds)
 
@@ -57,7 +60,6 @@ def construct_model(args):
     return model
 
 def get_parameters(model, config, isdefault=True):
-
     if isdefault:
         return model.parameters(), [1.]
     lr_1 = []
@@ -114,19 +116,24 @@ def dataFactory(train_dir, val_dir, args):
 
 class Trainer:
     def __init__(self):
+        """
+        # HEAT_WEIGHT = 46 * 46 * (1+args.num_class) / 1.0
+        multiple=multiple
+        """
         self._iter = 0
 
-    def save_ckpt(self, model_name, is_best=0):
-        save_checkpoint({
+    def save_ckpt(self, ckpt={}, is_best=False):
+        model_name = self.config.model_name
+        if is_best:
+            model_name = model_name +"_best.pth"
+        _ckpt = {
             'iter': self._iter,
             'state_dict': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict()
-        }, is_best, model_name)
+        }
+        _ckpt.update(ckpt)
+        save_checkpoint(_ckpt, is_best, model_name)
 
-        """
-        HEAT_WEIGHT
-        multiple=multiple
-        """
     def training_step(self, batch, batch_idx):        
         input, heatmap, centermap = batch
         input_var = torch.autograd.Variable(input)
@@ -137,7 +144,7 @@ class Trainer:
         assert torch.isnan(heat_list[0]).sum() == 0, print(loss)
         assert heat_list[0].shape == heatmap_var.shape, print(heat_list[0].shape, heatmap_var.shape)
 
-        loss_list = [self.criterion(heat, heatmap_var) * self.HEAT_WEIGHT for heat in heat_list]
+        loss_list = [self.criterion(heat, heatmap_var) for heat in heat_list]
         # bSize = input.size(0)
 
         loss = sum(loss_list)
@@ -157,7 +164,7 @@ class Trainer:
 
         heat_list = self.model(input_var, centermap_var)
         assert heat_list[0].shape == heatmap_var.shape, (heat_list[0].shape, heatmap_var.shape)
-        loss_list = [self.criterion(heat, heatmap_var) * self.HEAT_WEIGHT for heat in heat_list]
+        loss_list = [self.criterion(heat, heatmap_var) for heat in heat_list]
         
         return loss_list, input.size(0)
 
@@ -243,16 +250,7 @@ class Trainer:
         # for cnt in range(6):
         #     losses_list[cnt].reset()
         
-    def train(self, train_loader, val_loader, args):
-        config = Config(args.config)
-        cudnn.benchmark = True
-
-        self.criterion = nn.MSELoss().cuda()
-
-        params, multiple = get_parameters(self.model, config, False)
-
-        self.optimizer = torch.optim.SGD(params, config.base_lr, momentum=config.momentum,
-                                    weight_decay=config.weight_decay)
+    def train(self, train_loader, val_loader, config):
         self.config = config
 
         tic = time.time()
@@ -260,31 +258,41 @@ class Trainer:
         self._iter = config.start_iters
         best_loss = config.best_model
 
-        self.HEAT_WEIGHT = 46 * 46 * (1+args.num_class) / 1.0
-
         assert config.test_interval != 0
 
         while self._iter < config.max_iter:
         # for epochs in range(50):
             self.train_epoch(train_loader)
-            self.save_ckpt(args.model_name)
+            self.save_ckpt(ckpt={"loss": losses.avg})
             # val
-            if args.val_dir is not None and self._iter % config.test_interval == 0:
+            if config.val_dir and self._iter % config.test_interval == 0:
                 self.valid_epoch(val_loader)
-                if is_best:
-                    self.save_ckpt(args.model_name+"_best.pth", is_best=losses.avg < best_loss)
-                best_loss = min(best_loss, losses.avg)
+
+                if losses.avg < best_loss:
+                    is_best = True
+                    best_loss = losses.avg
+                    self.save_ckpt(ckpt={"loss": losses.avg}, is_best=is_best)
+                else:
+                    is_best = False
             self.model.train()
             print("run epochs finished ", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
         print("train finished")
 
 def main():
     args = parse_args()
+    config = Config(args.config)
+    args = namespaceMerge(args, config)
+
     model = construct_model(args)
     tr = Trainer()
-    
     train_loader, val_loader = dataFactory(args.train_dir, args.val_dir, args)
-    tr.model =model
+    tr.model = model
+    tr.criterion = nn.MSELoss(reduction='sum').cuda()
+
+    _params, _multiple = get_parameters(tr.model, config, False)
+    tr.optimizer = torch.optim.SGD(_params, args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
+
+    cudnn.benchmark = True
     tr.train(train_loader, val_loader, args)
 
 if __name__ == '__main__':
