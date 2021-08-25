@@ -15,7 +15,6 @@ from PIL import Image
 import torch
 import torch.utils.data as data
 
-sys.path.append('..')
 from utils.transforms import fliplr_joints, crop, generate_target, transform_pixel
 
 
@@ -24,6 +23,7 @@ class FaceDataset(data.Dataset):
     def __init__(self, csv_file, image_root=None, is_train=True, transform=None):
         # specify annotation file for dataset
         self.csv_file = csv_file
+        self.image_root = image_root
 
         self.is_train = is_train
         self.transform = transform

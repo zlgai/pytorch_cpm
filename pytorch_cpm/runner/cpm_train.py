@@ -1,19 +1,20 @@
 # -*-coding:UTF-8-*-
+import os
+import sys
 import argparse
 import time
-import os
+
 import torch.optim
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
-import sys
-sys.path.append(os.getcwd())
-from utils.utils import adjust_learning_rate as adjust_learning_rate
-from utils.utils import AverageMeter as AverageMeter
-from utils.utils import save_checkpoint as save_checkpoint
-from utils.utils import Config as Config
-import models.cpm_model
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+from models.cpm_model import CPM
 from dataset.lsp_lspet_data import LSP_Data
-# from dataset.lsp_lspet_data2 import CsvDataset
+from dataset.csv_keypoint_dataset import CsvDataset
+from utils.utils import Config, adjust_learning_rate, \
+    AverageMeter, save_checkpoint
 import utils.Mytransforms as Mytransforms
 
 
@@ -23,23 +24,24 @@ def parse_args(cmds=None):
                         dest='config', help='to set the parameters')
     parser.add_argument('--gpu', default=None, nargs='+', type=int,
                         dest='gpu', help='the gpu used')
-    parser.add_argument('--pretrained', default='../ckpt/cpm_latest.pth.tar',type=str,
-                        dest='pretrained', help='the path of pretrained model')
+    parser.add_argument('--pretrained', default='../ckpt/cpm_latest.pth.tar',
+                        help='the path of pretrained model')
     parser.add_argument('--train_dir','-i', help='the path of train file')
-    parser.add_argument('--val_dir', help='the path of val file')
+    parser.add_argument('--val_dir', '-v', help='the path of val file')
     parser.add_argument('--model-name', default='../ckpt/cpm', help='model name to save parameters')
     parser.add_argument('--num-class', default=14, type=int)
     parser.add_argument('--workers', default=4, type=int)
     parser.add_argument('--batch-size', default=4, type=int)
     parser.add_argument('--epochs', default=4, type=int)
     parser.add_argument('--accumulate', default=1, type=int)
-    parser.add_argument('--image-root')
-    return parser.parse_args(cmds)
+    parser.add_awrgument('--image-root')
+    parser.add_argument('--dataset-type', type=str.upper, choices=["LSP", "COCO", "CSV"], help='dataset type')
 
+    return parser.parse_args(cmds)
 
 def construct_model(args):
 
-    model = models.cpm_model.CPM(k=args.num_class)
+    model = CPM(k=args.num_class)
     # load pretrained model
     # state_dict = torch.load(args.pretrained)['state_dict']
     # from collections import OrderedDict
@@ -94,17 +96,16 @@ def dataFactory(train_dir, val_dir, args):
     # dataset = CsvDataset(train_dir, image_root=args.image_root,transformer=transformer)
 
     train_loader = torch.utils.data.DataLoader(
-        dataset=dataset,
+        dataset=dataset, drop_last=True,
         batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True)
 # val
     if args.val_dir:
-        mode = 'lspet' if 'lspet' in val_dir else 'lsp'
+        mode = 'lspet' if 'lspet' in args.val_dir else 'lsp'
+        val_dataset = LSP_Data(mode, args.val_dir, 8,
+            Mytransforms.Compose([Mytransforms.TestResized(368)]))
         val_loader = torch.utils.data.DataLoader(
-            lsp_lspet_data.LSP_Data(mode, val_dir, 8,
-                              Mytransforms.Compose([Mytransforms.TestResized(368),
-                                                    ])),
-            batch_size=args.batch_size, shuffle=True,
+            val_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True,
             num_workers=args.workers, pin_memory=True)
     else:
         val_loader = None
@@ -168,16 +169,15 @@ class Trainer:
         losses_list = [AverageMeter() for i in range(6)]
 
         config = self.config
-        end = time.time()
+        tic = time.time()
         for i, (batch) in enumerate(train_loader):
-            learning_rate = adjust_learning_rate(self.optimizer, self._iter, config.base_lr, policy=config.lr_policy,
-                                                policy_parameter=config.policy_parameter, multiple=multiple)
-            data_time.update(time.time() - end)
+            learning_rate = adjust_learning_rate(self.optimizer, self._iter, config.base_lr, policy=config.lr_policy, policy_parameter=config.policy_parameter, multiple=multiple)
+            data_time.update(time.time() - tic)
 
             loss_list, bSize = self.training_step(batch, i)
 
-            batch_time.update(time.time() - end)
-            end = time.time()
+            batch_time.update(time.time() - tic)
+            tic = time.time()
 
             loss = sum(loss_list)
             losses.update(loss.item(), bSize)
@@ -192,7 +192,7 @@ class Trainer:
                     'Learning rate = {2}\t'
                     'Loss = {loss.val:.8f} (avg = {loss.avg:.8f})'.format(
                     self._iter, config.display, learning_rate, batch_time=batch_time,
-                    data_time=data_time, loss=losses), end='\t')
+                    data_time=data_time, loss=losses), tic='\t')
                 print("loss=", [l.val for l in losses_list], "avg=", [l.avg for l in losses_list])
                 # print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), '-' * 80)
 
@@ -210,7 +210,7 @@ class Trainer:
         losses_list = [AverageMeter() for i in range(6)]
 
         self.config = config
-        end = time.time()
+        tic = time.time()
 
         model.eval()
         with torch.no_grad():
@@ -222,8 +222,8 @@ class Trainer:
                 for cnt, l in enumerate(loss_list):
                     losses_list[cnt].update(l.item(), bSize)
 
-                batch_time.update(time.time() - end)
-                end = time.time()
+                batch_time.update(time.time() - tic)
+                tic = time.time()
 
                 if j % config.display == 0:
                     print('Test Iteration: {0}\t'
@@ -255,7 +255,7 @@ class Trainer:
                                     weight_decay=config.weight_decay)
         self.config = config
 
-        end = time.time()
+        tic = time.time()
 
         self._iter = config.start_iters
         best_loss = config.best_model
@@ -279,7 +279,6 @@ class Trainer:
         print("train finished")
 
 def main():
-    # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     args = parse_args()
     model = construct_model(args)
     tr = Trainer()
@@ -291,4 +290,3 @@ def main():
 if __name__ == '__main__':
     cmds = ["--gpu","0","--train_dir","H:/Dataset/keypoint/lsp/lsp_dataset","--config","../config/config.yml"]
     main()
-
